@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="912a594c-efcd-4c48-9d95-cb04958e58b2" name="Changes" comment="projeto">
+      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/.idea/.gitignore" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/.idea/compiler.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/.idea/encodings.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/.idea/jarRepositories.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/.idea/misc.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/target/classes/buno/controller/GameController$1.class" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/target/classes/buno/controller/GameController.class" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/target/classes/buno/controller/ZookeeperService.class" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/target/classes/buno/data/cartas_disponiveis.csv" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/target/classes/buno/model/Baralho.class" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/target/classes/buno/model/Carta.class" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/target/classes/buno/model/Cor.class" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/target/classes/buno/model/Host.class" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/target/classes/buno/model/Jogador.class" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/target/classes/buno/model/Partida.class" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/target/classes/buno/model/Sala.class" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/target/classes/buno/model/Simbolo.class" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/target/classes/buno/view/App.class" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/target/classes/buno/view/AppWatcher.class" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/target/classes/buno/view/MainApp.class" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/target/classes/buno/view/MainController.class" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/buno-FINAL/target/classes/simplelogger.properties" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../LICENSE" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../README.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/buno-FINAL/src/main/java/buno/controller/ZookeeperService.java" beforeDir="false" afterPath="$PROJECT_DIR$/buno-FINAL/src/main/java/buno/controller/ZookeeperService.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/buno-FINAL/src/main/java/buno/model/Jogador.java" beforeDir="false" afterPath="$PROJECT_DIR$/buno-FINAL/src/main/java/buno/model/Jogador.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/buno-FINAL/src/main/java/buno/view/App.java" beforeDir="false" afterPath="$PROJECT_DIR$/buno-FINAL/src/main/java/buno/view/App.java" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="CopilotChats">
+    <option name="panelChat">
+      <chat>
+        <option name="activeSessionId" value="0f5c7ba8-3d5b-478d-b42e-497711646bc1" />
+        <option name="sessions">
+          <session>
+            <option name="chatType" value="PANEL" />
+            <option name="id" value="ed8fe84b-5bdb-4230-a6e8-56fb9e670bf0" />
+            <option name="modeId" value="Ask" />
+            <option name="modelType" value="builtin_family" />
+            <option name="modelValue" value="auto" />
+            <option name="targetType" value="LOCAL" />
+          </session>
+          <session>
+            <option name="chatType" value="PANEL" />
+            <option name="id" value="0f5c7ba8-3d5b-478d-b42e-497711646bc1" />
+            <option name="modeId" value="Ask" />
+            <option name="modelType" value="builtin_family" />
+            <option name="modelValue" value="auto" />
+            <option name="targetType" value="LOCAL" />
+          </session>
+        </option>
+        <option name="type" value="PANEL" />
+      </chat>
+    </option>
+  </component>
+  <component name="CopilotPersistence">
+    <persistenceIdMap>
+      <entry key="_C:/Users/ps206/Downloads/buno-Valber-SalaJogo" value="3GEm8X1rhPjiv9IAlXzxuM3DExK" />
+      <entry key="_C:/Users/ps206/OneDrive/Documentos/buno_distributed-systems/buno-FINAL" value="3GKCINrtKbDOwpdCTtnsZi63Vh3" />
+    </persistenceIdMap>
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$/.." value="paloma/projeto-completo" />
+      </map>
+    </option>
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$/.." />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 2
+}</component>
+  <component name="ProjectId" id="3GEm8X1rhPjiv9IAlXzxuM3DExK" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Application.App.executor&quot;: &quot;Run&quot;,
+    &quot;Application.Buno.executor&quot;: &quot;Run&quot;,
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;paloma/projeto-completo&quot;,
+    &quot;kotlin-language-version-configured&quot;: &quot;true&quot;
+  }
+}</component>
+  <component name="RecentsManager">
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="C:\Users\ps206\Downloads\buno-Valber-SalaJogo\buno-Valber-SalaJogo\src\main\resources\buno\data" />
+    </key>
+  </component>
+  <component name="RunManager">
+    <configuration name="Buno" type="Application" factoryName="Application" singleton="false">
+      <option name="ALTERNATIVE_JRE_PATH" value="openjdk-25" />
+      <option name="ALTERNATIVE_JRE_PATH_ENABLED" value="true" />
+      <option name="MAIN_CLASS_NAME" value="buno.view.App" />
+      <module name="buno" />
+      <option name="PROGRAM_PARAMETERS" value="localhost:2181" />
+      <method v="2">
+        <option name="Make" enabled="true" />
+      </method>
+    </configuration>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-jdk-30f59d01ecdd-26cb7f24e5b0-intellij.indexing.shared.core-IU-253.29346.138" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="912a594c-efcd-4c48-9d95-cb04958e58b2" name="Changes" comment="" />
+      <created>1783544946437</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1783544946437</updated>
+    </task>
+    <servers />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="github-copilot-workspace">
+    <instructionFileLocations>
+      <option value=".github/instructions" />
+    </instructionFileLocations>
+    <promptFileLocations>
+      <option value=".github/prompts" />
+    </promptFileLocations>
+  </component>
+</project>

@@ -11,6 +11,7 @@ public class Jogador {
     private ArrayList<Carta> mao;
     private int quantidadeCartas; //Contagem pública da mão (para outros jogadores verem sem ler /cartas)
     private String conexaoPath; //O caminho do nó efêmero em /conexoes que representa esta sessão
+    private boolean penalidadeEmAndamento = false;
 
     public Jogador(String nome, Sala salaAtual){
         this.salaAtual = salaAtual;
@@ -106,4 +107,15 @@ public class Jogador {
     public int hashCode() {
         return Objects.hash(path);
     }
+
+
+    public boolean isPenalidadeEmAndamento() {
+        return penalidadeEmAndamento;
+    }
+
+    public void setPenalidadeEmAndamento(boolean penalidadeEmAndamento) {
+        this.penalidadeEmAndamento = penalidadeEmAndamento;
+    }
+
+
 }

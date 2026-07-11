@@ -21,9 +21,11 @@ import java.util.ArrayList;
 public class ZookeeperService {
     private final String salas_node = "/salas"; //Nó raiz de todas as salas
     private ZooKeeper zookeeper;
+    private final String enderecoZk;
 
 //    private final ACL CLIENTEGERAL = new ACL(ZooDefs.Perms.READ, new Id("world", "anyone"));
-    public ZookeeperService() throws IOException, InterruptedException, KeeperException {
+    public ZookeeperService(String enderecoZk) throws IOException, InterruptedException, KeeperException {
+        this.enderecoZk = enderecoZk;
         conectar(null, null);
         Stat stat = zookeeper.exists(salas_node, false);
         //Se o nó raiz /salas não existir cria ele de forma persistente e pública
@@ -42,7 +44,7 @@ public class ZookeeperService {
 
         }
         //arg: endereço IP, Timeout(ms), vincular monitor
-        zookeeper = new ZooKeeper("localhost:2181", 15000, watcher);
+        zookeeper = new ZooKeeper(enderecoZk, 15000, watcher);
         // Se tiver uma senha reinjeta as credenciais do Host
         if (senhaDaSala != null) {
             zookeeper.addAuthInfo("digest", ("host:" + senhaDaSala).getBytes());
@@ -251,7 +253,27 @@ public class ZookeeperService {
                     aclRequisicao,
                     CreateMode.EPHEMERAL_SEQUENTIAL);
 
-            zookeeper.addWatch(reqPath, event -> {
+            java.util.concurrent.atomic.AtomicBoolean jaProcessado =
+                    new java.util.concurrent.atomic.AtomicBoolean(false);
+
+            byte[] dadosIniciais = zookeeper.getData(reqPath, event -> {
+                if (event.getType() == Watcher.Event.EventType.NodeDataChanged
+                        && jaProcessado.compareAndSet(false, true)) {
+                    try {
+                        byte[] dados = zookeeper.getData(reqPath, false, null);
+                        processarCartaComprada(jogador, partida, reqPath, dados);
+                    } catch (Exception e) {
+                        System.out.println("Erro ao ler resposta da requisição: " + e.getMessage());
+                    }
+                }
+            }, null);
+
+            String conteudoInicial = new String(dadosIniciais);
+            if (!conteudoInicial.equals(jogador.getPath()) && jaProcessado.compareAndSet(false, true)) {
+                processarCartaComprada(jogador, partida, reqPath, dadosIniciais);
+            }
+
+            /*zookeeper.addWatch(reqPath, event -> {
                 if (event.getType() == Watcher.Event.EventType.NodeDataChanged) {
                     try {
                         byte[] dados = zookeeper.getData(reqPath, false, null);
@@ -267,12 +289,24 @@ public class ZookeeperService {
                         System.out.println("Erro ao ler resposta da requisição: " + e.getMessage());
                     }
                 }
-            }, AddWatchMode.PERSISTENT);
+            }, AddWatchMode.PERSISTENT);*/
 
         } catch (Exception e) {
             System.out.println("Erro ao solicitar compra de carta: " + e.getMessage());
         }
     }
+
+    private void processarCartaComprada(Jogador jogador, Partida partida, String reqPath, byte[] dados) throws Exception {
+        Carta cartaRecebida = new Carta(new String(dados));
+        jogador.adicionarCarta(cartaRecebida);
+        atualizarMao(jogador);
+        zookeeper.delete(reqPath, -1);
+        System.out.println(App.VERDE + "\nVocê comprou: " + cartaRecebida + App.RESET);
+
+        partida.passarTurno();
+        atualizarStatus(jogador);
+    }
+
 
     // Valida a senha digitada pelo cliente tentando ler o sub-nó restrito /conexoes
     public boolean validarSenha(Sala sala, String senha) throws InterruptedException {
@@ -316,16 +350,17 @@ public class ZookeeperService {
                     if (dados != null) {
                         partida.importStatus(new String(dados));
                         if (partida.temVencedor()) {
-                            App.telaVitoria(jogador, partida);
-                            if (jogador instanceof Host) {
-                                removerNode(jogador.getSalaAtual().getPath());
-                            }
-
-                            App.telaInicial();
+                            App.executarNaUi(() -> {
+                                App.telaVitoria(jogador, partida);
+                                if (jogador instanceof Host) {
+                                    removerNode(jogador.getSalaAtual().getPath());
+                                }
+                                App.telaInicial();
+                            });
                         } else {
                             partida.setFilaJogadores(atualizarListaJogadores(sala));
                             partida.importStatus(new String(dados));
-                            App.telaGame(jogador);
+                            App.executarNaUi(() -> App.telaGame(jogador));
                         }
 
                     }
@@ -386,7 +421,7 @@ public class ZookeeperService {
                         byte[] dados = zookeeper.getData(cartasPath, false, null);
                         jogador.importMao(new String(dados));
                         if (jogador.getSalaAtual().getPartida().isEmAndamento()) {
-                            App.telaGame(jogador);
+                            App.executarNaUi(() -> App.telaGame(jogador));
                         }
                         System.out.println(App.VERDE + "\nSua mão foi atualizada." + App.RESET);
                     } catch (Exception e) {
@@ -419,6 +454,10 @@ public class ZookeeperService {
         Partida partida = host.getSalaAtual().getPartida();
         Carta cartaTopo = comprarCartaZookeeper(host.getSalaAtual());
 
+        if (cartaTopo.getCor() == Cor.PRETO) {
+            cartaTopo.setCor(corAleatoria());
+        }
+
         partida.setFilaJogadores(atualizarListaJogadores(sala));
 
         partida.setJogadorAtual(partida.getFilaJogadores().get(0));
@@ -432,6 +471,11 @@ public class ZookeeperService {
 
         //Quando os jogadores receberem do watcher que o nó de status foi atualizado a partida vai começar
         atualizarStatus(host);
+    }
+    private static final Cor[] CORES_VALIDAS = { Cor.VERDE, Cor.AMARELO, Cor.AZUL, Cor.VERMELHO };
+
+    private Cor corAleatoria() {
+        return CORES_VALIDAS[new java.util.Random().nextInt(CORES_VALIDAS.length)];
     }
 
     private void distribuirCartasIniciais(Host host, int quantidade) {
@@ -481,6 +525,7 @@ public class ZookeeperService {
     // qualquer forma — não precisamos de um nó "/saidas" separado para esse aviso.
     public void sairDaSala(Jogador jogador) {
         try {
+            Sala sala = jogador.getSalaAtual();
 
             if (jogador.getConexaoPath() != null &&
                     zookeeper.exists(jogador.getConexaoPath(), false) != null) {
@@ -488,11 +533,29 @@ public class ZookeeperService {
                 zookeeper.delete(jogador.getConexaoPath(), -1);
             }
 
+            if (sala != null) {
+                removerWatchesDaSala(sala, jogador);
+            }
             jogador.getMao().clear();
             jogador.setSalaAtual(null);
 
         } catch (Exception e) {
             System.out.println("Erro ao sair da sala: " + e.getMessage());
+        }
+    }
+    private void removerWatchesDaSala(Sala sala, Jogador jogador) {
+        java.util.List<String> paths = new java.util.ArrayList<>();
+        paths.add(sala.getPath() + "/status");
+        paths.add(sala.getPath() + "/jogadores");
+        if (jogador.getPath() != null) {
+            paths.add(jogador.getPath() + "/cartas");
+        }
+
+        for (String path : paths) {
+            try {
+                zookeeper.removeAllWatches(path, Watcher.WatcherType.Any, false);
+            } catch (Exception ignored) {
+            }
         }
     }
 
@@ -596,6 +659,9 @@ public class ZookeeperService {
         String baralhoPath = sala.getPath() + "/baralho";
         String cartasPath = pathJogador + "/cartas";
         try {
+            if(zookeeper.exists(cartasPath, false)==null){
+                return;
+            }
             ArrayList<ACL> aclBaralho = new ArrayList<>();
             aclBaralho.add(new ACL(ZooDefs.Perms.ALL, autentificaoDigest("host", sala.getSenha())));
 
@@ -674,6 +740,7 @@ public class ZookeeperService {
             Partida partida = jogador.getSalaAtual().getPartida();
             partida.zerarObrigacaoCompra();
             partida.passarTurno();
+            jogador.setPenalidadeEmAndamento(false);
             atualizarStatus(jogador);
             return;
         }
@@ -691,7 +758,11 @@ public class ZookeeperService {
                     aclRequisicao,
                     CreateMode.EPHEMERAL_SEQUENTIAL);
 
-            zookeeper.addWatch(reqPath, event -> {
+            java.util.concurrent.atomic.AtomicBoolean jaProcessado =
+                    new java.util.concurrent.atomic.AtomicBoolean(false);
+
+
+            /*zookeeper.addWatch(reqPath, event -> {
                 if (event.getType() == Watcher.Event.EventType.NodeDataChanged) {
                     try {
                         byte[] dados = zookeeper.getData(reqPath, false, null);
@@ -705,10 +776,41 @@ public class ZookeeperService {
                         System.out.println("Erro ao processar compra forçada: " + e.getMessage());
                     }
                 }
-            }, AddWatchMode.PERSISTENT);
+            }, AddWatchMode.PERSISTENT);*/
+
+            byte[] dadosIniciais = zookeeper.getData(reqPath, event -> {
+                if (event.getType() == Watcher.Event.EventType.NodeDataChanged
+                        && jaProcessado.compareAndSet(false, true)) {
+                    try {
+                        byte[] dados = zookeeper.getData(reqPath, false, null);
+                        processarCartaDaPenalidade(jogador, reqPath, dados, quantidade);
+                    } catch (Exception e) {
+                        System.out.println("Erro ao processar compra forçada: " + e.getMessage());
+                    }
+                }
+            }, null);
+
+            // Se a resposta já estava lá quando registramos o watch (host foi mais rápido
+            // que a rede até nós), processa imediatamente em vez de esperar um evento que
+            // já não vai mais chegar.
+            String conteudoInicial = new String(dadosIniciais);
+            if (!conteudoInicial.equals(jogador.getPath()) && jaProcessado.compareAndSet(false, true)) {
+                processarCartaDaPenalidade(jogador, reqPath, dadosIniciais, quantidade);
+            }
+
 
         } catch (Exception e) {
             System.out.println("Erro ao solicitar compra forçada: " + e.getMessage());
         }
     }
+
+    private void processarCartaDaPenalidade(Jogador jogador, String reqPath, byte[] dados, int quantidade) throws Exception {
+        Carta cartaRecebida = new Carta(new String(dados));
+        jogador.adicionarCarta(cartaRecebida);
+        atualizarMao(jogador);
+        zookeeper.delete(reqPath, -1);
+        System.out.println(App.VERMELHO + "Você comprou (penalidade): " + cartaRecebida + App.RESET);
+        comprarCartasForcadas(jogador, quantidade - 1); // encadeia até acabar
+    }
+
 }

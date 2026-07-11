@@ -29,9 +29,16 @@ public class App {
     public static GameController gameController;
     public static ZookeeperService conexao;
 
+    private static final java.util.concurrent.ExecutorService uiExecutor =
+            java.util.concurrent.Executors.newSingleThreadExecutor();
+
+    public static void executarNaUi(Runnable tarefa) {
+        uiExecutor.submit(tarefa);
+    }
     public static void main(String[] args) {
         try {
-            conexao = new ZookeeperService();
+            String enderecoZk = args.length >0 ?args[0] : "localhost:2181";
+            conexao = new ZookeeperService(enderecoZk);
 
             telaInicial();
 
@@ -371,9 +378,12 @@ public class App {
             if (partida.getCartasParaComprar() > 0
                     && jogador.getPath() != null
                     && jogador.getPath().equals(partida.getJogadorObrigadoPath())) {
-                System.out.println(VERMELHO + "\nVocê foi penalizado! Comprando "
-                        + partida.getCartasParaComprar() + " carta(s) e perdendo a vez..." + RESET);
-                conexao.comprarCartasForcadas(jogador, partida.getCartasParaComprar());
+                if (!jogador.isPenalidadeEmAndamento()) {
+                    jogador.setPenalidadeEmAndamento(true);
+                    System.out.println(VERMELHO + "\nVocê foi penalizado! Comprando "
+                            + partida.getCartasParaComprar() + " carta(s) e perdendo a vez..." + RESET);
+                    conexao.comprarCartasForcadas(jogador, partida.getCartasParaComprar());
+                }
                 return; // não mostra o menu, a compra forçada cuida do resto
             }
 
