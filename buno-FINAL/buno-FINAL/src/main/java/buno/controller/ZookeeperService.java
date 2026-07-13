@@ -319,10 +319,27 @@ public class ZookeeperService {
         }
     }
 
+    public boolean salaCheia(Sala sala) {
+        String jogadoresPath = sala.getPath() + SUB_JOGADORES;
+        try {
+            List<String> filhos = zookeeper.getChildren(jogadoresPath, false);
+            return filhos.size() >= sala.getLimiteJogadores();
+        } catch (Exception e) {
+            System.out.println("Erro ao verificar limite de jogadores: " + e.getMessage());
+            return false;
+        }
+    }
+
     public Partida entrarNaSala(Jogador jogador){
         Sala sala = jogador.getSalaAtual();
         Partida partida = new Partida();
         sala.setPartida(partida);
+
+        // Referência mutável: permite que este jogador seja promovido a Host durante a
+        // partida (eleição de líder) sem precisar recriar os watchers já registrados
+        // nesta sessão do ZooKeeper — eles passam a enxergar o novo objeto Host.
+        java.util.concurrent.atomic.AtomicReference<Jogador> jogadorRef =
+                new java.util.concurrent.atomic.AtomicReference<>(jogador);
 
         String jogadoresPath = sala.getPath()+SUB_JOGADORES;
         String conexoesPath = sala.getPath()+SUB_CONEXOES;
@@ -409,14 +426,86 @@ public class ZookeeperService {
                     ZooDefs.Ids.CREATOR_ALL_ACL, CreateMode.EPHEMERAL_SEQUENTIAL);
             jogador.setConexaoPath(conexaoPath);
 
-
-
+            monitorarLideranca(jogadorRef);
 
         } catch (Exception e) {
             System.out.println("Não foi possível criar os nodes básicos da partida: "+e.getMessage());
         }
         return partida;
 
+    }
+
+    // TOLERÂNCIA A FALHAS
+    private void monitorarLideranca(java.util.concurrent.atomic.AtomicReference<Jogador> jogadorRef) {
+        try {
+            Jogador jogador = jogadorRef.get();
+            String conexoesPath = jogador.getSalaAtual().getPath() + "/conexoes";
+            List<String> filhos = zookeeper.getChildren(conexoesPath, false);
+            Collections.sort(filhos);
+
+            String meuNo = jogador.getConexaoPath().substring(conexoesPath.length() + 1);
+            int minhaPos = filhos.indexOf(meuNo);
+            if (minhaPos <= 0) {
+                return; // já é o menor sequencial (o host atual) - nada a monitorar
+            }
+
+            String predecessorPath = conexoesPath + "/" + filhos.get(minhaPos - 1);
+            Stat stat = zookeeper.exists(predecessorPath, event -> {
+                if (event.getType() == Watcher.Event.EventType.NodeDeleted) {
+                    reavaliarLideranca(jogadorRef);
+                }
+            });
+
+            // O predecessor já tinha sumido entre o getChildren() e o exists() acima
+            // (corrida rara, mas possível) -> reavalia imediatamente em vez de esperar
+            // um evento que já não vai mais chegar.
+            if (stat == null) {
+                reavaliarLideranca(jogadorRef);
+            }
+        } catch (Exception e) {
+            System.out.println("Erro ao monitorar liderança: " + e.getMessage());
+        }
+    }
+
+    private void reavaliarLideranca(java.util.concurrent.atomic.AtomicReference<Jogador> jogadorRef) {
+        try {
+            Jogador jogador = jogadorRef.get();
+            String conexoesPath = jogador.getSalaAtual().getPath() + "/conexoes";
+            List<String> filhos = zookeeper.getChildren(conexoesPath, false);
+            if (filhos.isEmpty()) {
+                return; // sala vazia, nada a fazer
+            }
+            Collections.sort(filhos);
+
+            String meuNo = jogador.getConexaoPath().substring(conexoesPath.length() + 1);
+            if (filhos.get(0).equals(meuNo)) {
+                assumirHost(jogadorRef);
+            } else {
+                monitorarLideranca(jogadorRef); // ainda não sou o menor, observa o novo predecessor
+            }
+        } catch (Exception e) {
+            System.out.println("Erro ao reavaliar liderança: " + e.getMessage());
+        }
+    }
+
+    // Promove o jogador local a Host
+    private void assumirHost(java.util.concurrent.atomic.AtomicReference<Jogador> jogadorRef) {
+        Jogador jogadorAtual = jogadorRef.get();
+        if (jogadorAtual instanceof Host) {
+            return; // segurança: evita promover duas vezes
+        }
+
+        Host novoHost = new Host(jogadorAtual);
+        jogadorRef.set(novoHost);
+
+        try {
+            escutarConexoes(novoHost);
+            escutarRequisicoes(novoHost);
+            System.out.println(App.VERMELHO + "\nO host caiu. Você assumiu o papel de host!" + App.RESET);
+            App.executarNaUi(() -> App.telaGame(novoHost));
+        } catch (Exception e) {
+            System.out.println("Erro ao assumir papel de host: " + e.getMessage());
+        }
     }
 
     public void comecarPartida(Host host){
@@ -526,46 +615,15 @@ public class ZookeeperService {
         }
     }
 
-    /*public void sairDaPartida(Jogador jogador) {
-        Sala sala = jogador.getSalaAtual();
-        Partida partida = sala.getPartida();
-
-        if (partida.isEmAndamento() && partida.getFilaJogadores() != null) {
-            int restantes = partida.getFilaJogadores().size() - 1;
-
-            if (restantes >= 2) {
-                // Ainda sobra gente suficiente: só passa a vez para o próximo e a
-                // partida continua normalmente.
-                Jogador proximo = partida.proximoJogadorExcluindo(jogador);
-                if (proximo != null) {
-                    partida.setJogadorAtual(proximo);
-                    partida.incrementarTurno();
-                    atualizarStatus(jogador);
-                }
-            } else if (restantes == 1) {
-                // Só vai sobrar um jogador: ele vence por W.O. e a partida acaba,
-                // todo mundo volta para a tela inicial (ver App.telaVitoria).
-                Jogador ultimoJogador = partida.proximoJogadorExcluindo(jogador);
-                if (ultimoJogador != null) {
-                    partida.declararVencedor(ultimoJogador);
-                    atualizarStatus(jogador);
-                }
-            }
-            // restantes <= 0: não há mais ninguém para notificar.
-        }
-
-        sairDaSala(jogador);
-    }*/
-
-
     // O host começa a acompanhar /conexoes assim que entra na sala
     public void escutarConexoes(Host host) {
         Sala sala = host.getSalaAtual();
-        String conexoesPath = sala.getPath() + "/conexoes";
+        String conexoesPath = sala.getPath() + SUB_CONEXOES;
         try {
             for (String filho : zookeeper.getChildren(conexoesPath, false)) {
                 registrarConexao(conexoesPath, filho);
             }
+            reconciliarJogadoresOrfaos(sala, host);
             zookeeper.addWatch(conexoesPath, event -> {
                 if (event.getType() == Watcher.Event.EventType.NodeChildrenChanged) {
                     processarMudancaConexoes(sala, host);
@@ -576,6 +634,20 @@ public class ZookeeperService {
         }
     }
 
+    private void reconciliarJogadoresOrfaos(Sala sala, Host host) {
+        String jogadoresPath = sala.getPath() + "/jogadores";
+        try {
+            java.util.Set<String> pathsComConexaoAtiva = new java.util.HashSet<>(conexoesJogadores.values());
+            for (String filho : zookeeper.getChildren(jogadoresPath, false)) {
+                String pathJogador = jogadoresPath + "/" + filho;
+                if (!pathsComConexaoAtiva.contains(pathJogador)) {
+                    devolverCartasAoBaralho(sala, pathJogador, host);
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("Erro ao reconciliar jogadores órfãos: " + e.getMessage());
+        }
+    }
     private void registrarConexao(String conexoesPath, String filho) {
         String path = conexoesPath + "/" + filho;
         try {
@@ -617,8 +689,8 @@ public class ZookeeperService {
     }
 
     private void devolverCartasAoBaralho(Sala sala, String pathJogador, Host host) {
-        String baralhoPath = sala.getPath() + "/baralho";
-        String cartasPath = pathJogador + "/cartas";
+        String baralhoPath = sala.getPath() + SUB_BARALHO;
+        String cartasPath = pathJogador +SUB_CARTAS;
         try {
             if(zookeeper.exists(cartasPath, false)==null){
                 return;
@@ -638,16 +710,47 @@ public class ZookeeperService {
             System.out.println(App.AMARELO + "\nUm jogador saiu da partida e suas cartas voltaram ao baralho." + App.RESET);
 
             Partida partida = sala.getPartida();
+
+
+            // Se quem saiu estava com a vez, precisamos escolher o próximo ANTES de
+            // reconstruir filaJogadores (senão ele já não estará mais na lista antiga e
+            // proximoJogadorExcluindo perde a posição/ordem certa).
+            boolean eraAVezDele = partida.getJogadorAtual() != null
+                    && java.util.Objects.equals(partida.getJogadorAtual().getPath(), pathJogador);
+            String proximoPath = null;
+            if (eraAVezDele && partida.getFilaJogadores() != null) {
+                for (Jogador j : partida.getFilaJogadores()) {
+                    if (java.util.Objects.equals(j.getPath(), pathJogador)) {
+                        Jogador proximo = partida.proximoJogadorExcluindo(j);
+                        proximoPath = proximo == null ? null : proximo.getPath();
+                        break;
+                    }
+                }
+            }
+            // Se o jogador que saiu era quem estava "obrigado" a comprar (+2/+4 pendurado),
+            // essa obrigação não faz mais sentido — zera pra não travar o próximo turno.
+            if (pathJogador.equals(partida.getJogadorObrigadoPath())) {
+                partida.zerarObrigacaoCompra();
+            }
+
             partida.setFilaJogadores(atualizarListaJogadores(sala));
 
             if (partida.getFilaJogadores().isEmpty()) {
                 // Ninguém mais restou na sala, encerra e limpa os nodes no ZooKeeper.
                 removerNode(sala.getPath());
             } else if (partida.getFilaJogadores().size() == 1 && partida.isEmAndamento() && !partida.temVencedor()) {
-                // Só restou um jogador ele vence por W.O. e a partida acaba para todos.
                 partida.declararVencedor(partida.getFilaJogadores().get(0));
                 atualizarStatus(host);
             } else if (partida.isEmAndamento() && !partida.temVencedor()) {
+                if (eraAVezDele && proximoPath != null) {
+                    for (Jogador j : partida.getFilaJogadores()) {
+                        if (java.util.Objects.equals(j.getPath(), proximoPath)) {
+                            partida.setJogadorAtual(j);
+                            break;
+                        }
+                    }
+                    partida.incrementarTurno();
+                }
                 atualizarStatus(host);
             }
 

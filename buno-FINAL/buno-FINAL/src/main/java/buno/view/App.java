@@ -5,7 +5,7 @@ import buno.controller.ZookeeperService;
 import buno.model.*;
 
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.*;
 
 public class App {
 
@@ -161,9 +161,11 @@ public class App {
         // Lista todas as salas encontradas no nó /salas
         for (int i = 0; i < salas.size(); i++) {
             Sala sala = salas.get(i);
+            String tipo = sala.temSenha()? "Privada":"Pública";
             System.out.println(
                     AZUL + "[" + i + "] " + RESET +
                             NEGRITO + sala.getNome() + RESET +
+                            " - " + tipo +
                             " | Jogadores Máx: " + sala.getLimiteJogadores()
             );
         }
@@ -216,6 +218,13 @@ public class App {
             }
         } while (!senhaValida);
 
+        //teste se chegou ao limite de jogadores
+        if (conexao.salaCheia(salaEscolhida)) {
+            erro("Sala cheia! Limite de " + salaEscolhida.getLimiteJogadores() + " jogadores atingido.");
+            pausar();
+            telaInicial();
+            return;
+        }
         String nome = telaCriaNome();
         Jogador jogador = new Jogador(nome, salaEscolhida);
         // Cria o nó efêmero de conexão e o nó persistente do jogador
@@ -394,10 +403,20 @@ public class App {
                 System.out.println(CIANO + "[NUMERO]" + RESET + " Jogar carta");
                 System.out.println(CIANO + "[C]" + RESET + " Comprar carta");
                 System.out.println(CIANO + "[S]" + RESET + " Sair da partida");
+                System.out.println(AMARELO + "\nVocê tem 20s para jogar!" + RESET);
                 System.out.print(AMARELO + "\nEscolha: " + RESET);
 
-                String escolha = scanner.nextLine().trim();
+                //String escolha = scanner.nextLine().trim();
+                String escolha = lerComTimeout(20);
 
+                if (escolha == null) {
+                    System.out.println(VERMELHO + "\n⌛ Tempo esgotado! Passando a vez..." + RESET);
+                    partida.passarTurno();
+                    conexao.atualizarStatus(jogador);
+                    break;
+                }
+
+                escolha = escolha.trim();
                 if (escolha.equalsIgnoreCase("C")) {
                     conexao.pedirCompra(jogador);
                     break;
@@ -492,6 +511,25 @@ public class App {
     public static void pausar() {
         System.out.print(AMARELO + "\nPressione ENTER para continuar..." + RESET);
         scanner.nextLine();;
+    }
+    // =========================
+    // LEITURA COM TIMEOUT (TURNO)
+    // =========================
+    public static String lerComTimeout(int segundosTotais) {
+        long limiteMs = segundosTotais * 1000L;
+        long inicio = System.currentTimeMillis();
+
+        try {
+            while (System.currentTimeMillis() - inicio < limiteMs) {
+                if (System.in.available() > 0) {
+                    return scanner.nextLine();
+                }
+                Thread.sleep(150);
+            }
+        } catch (java.io.IOException | InterruptedException e) {
+            // ignora, cai no retorno de baixo
+        }
+        return null; // tempo esgotado, ninguém digitou nada
     }
 
     public static void sucesso(String msg) {
