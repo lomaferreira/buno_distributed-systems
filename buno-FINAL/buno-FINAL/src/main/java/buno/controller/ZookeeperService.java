@@ -20,13 +20,6 @@ import java.util.ArrayList;
 
 public class ZookeeperService {
     private final String salas_node = "/salas"; //Nó raiz de todas as salas
-    private static final String SUB_STATUS = "/status";
-    private static final String SUB_BARALHO = "/baralho";
-    private static final String SUB_REQUISICOES = "/requisicoes";
-    private static final String SUB_CONEXOES = "/conexoes";
-    private static final String SUB_JOGADORES = "/jogadores";
-    private static final String SUB_CARTAS = "/cartas";
-
     private ZooKeeper zookeeper;
     private final String enderecoZk;
 
@@ -130,21 +123,27 @@ public class ZookeeperService {
     }
 
     public void criarNodesPartida(Sala sala) {
-        String statusPath = sala.getPath()+SUB_STATUS;
-        String baralhoPath = sala.getPath()+SUB_BARALHO;
-        String requisicoesPath = sala.getPath()+SUB_REQUISICOES;
-        String conexoesPath = sala.getPath()+SUB_CONEXOES;
-        String jogadoresPath = sala.getPath()+SUB_JOGADORES;
-
+        String statusPath = sala.getPath()+"/status";
+        String baralhoPath = sala.getPath()+"/baralho";
+        String requisicoesPath = sala.getPath()+"/requisicoes";
+        String conexoesPath = sala.getPath()+"/conexoes";
+        String jogadoresPath = sala.getPath()+"/jogadores";
         try {
             zookeeper.create(statusPath, null, ZooDefs.Ids.CREATOR_ALL_ACL, CreateMode.PERSISTENT);
 
-            //baralho só pode ser lido/escrito por quem carrega a credencial de HOST
+            // /baralho só pode ser lido/escrito por quem carrega a credencial de HOST.
+            // Note que NÃO usamos CREATOR_ALL_ACL aqui: nesse ponto da sessão (dentro de criarSala)
+            // já injetamos tanto "host:senha" quanto "jogador:senha" como credenciais do cliente,
+            // e o CREATOR_ALL_ACL daria ALL a TODAS as credenciais presentes na sessão no momento
+            // da criação — ou seja, um jogador comum acabaria com acesso total ao baralho, o que
+            // quebraria exatamente a restrição que queremos.
             ArrayList<ACL> aclBaralho = new ArrayList<>();
             aclBaralho.add(new ACL(ZooDefs.Perms.ALL, autentificaoDigest("host", sala.getSenha())));
             zookeeper.create(baralhoPath, null, aclBaralho, CreateMode.PERSISTENT);
 
             // /requisicoes é o nó mediador entre jogadores e o baralho do host.
+            // O host tem controle total (ALL); o jogador só pode CRIAR um pedido de compra —
+            // ele não enxerga o /baralho diretamente, nem pode ler/escrever nos pedidos de outros.
             ArrayList<ACL> aclRequisicoes = new ArrayList<>();
             aclRequisicoes.add(new ACL(ZooDefs.Perms.ALL, autentificaoDigest("host", sala.getSenha())));
             aclRequisicoes.add(new ACL(ZooDefs.Perms.CREATE, autentificaoDigest("jogador", sala.getSenha())));
@@ -162,7 +161,7 @@ public class ZookeeperService {
 
     public void criarBaralhoRemoto(Host host) {
         Sala sala = host.getSalaAtual();
-        String baralhoPath = sala.getPath() + SUB_BARALHO;
+        String baralhoPath = sala.getPath() + "/baralho";
         Baralho baralho = host.getBaralho();
 
         try {
@@ -180,14 +179,14 @@ public class ZookeeperService {
     }
 
     public Carta comprarCartaZookeeper(Sala sala) {
-        String baralhoPath = sala.getPath() + SUB_BARALHO;
+        String baralhoPath = sala.getPath() + "/baralho";
         try {
             List<String> filhos = zookeeper.getChildren(baralhoPath, false);
             if (filhos.isEmpty()) {
-                return null; // Baralho remoto vazio
+                return null; // Baralho remoto vazio (aqui poderia reembaralhar a pilha de descarte)
             }
 
-            Collections.sort(filhos); // Garante que pegar sempre o menor sufixo sequencial (o "topo")
+            Collections.sort(filhos); // Garante que pegamos sempre o menor sufixo sequencial (o "topo")
             String menorFilho = filhos.get(0);
             String cartaPath = baralhoPath + "/" + menorFilho;
 
@@ -203,7 +202,7 @@ public class ZookeeperService {
     }
     public void escutarRequisicoes(Host host) {
         Sala sala = host.getSalaAtual();
-        String requisicoesPath = sala.getPath() + SUB_REQUISICOES;
+        String requisicoesPath = sala.getPath() + "/requisicoes";
         try {
             zookeeper.addWatch(requisicoesPath, event -> {
                 if (event.getType() == Watcher.Event.EventType.NodeChildrenChanged) {
@@ -223,6 +222,9 @@ public class ZookeeperService {
                 byte[] dados = zookeeper.getData(reqPath, false, null);
                 String conteudo = new String(dados);
 
+                // O nó é criado pelo jogador com o próprio path como conteúdo (ver pedirCompra).
+                // Enquanto o conteúdo continuar sendo esse path, o pedido ainda não foi atendido;
+                // depois de atendido, o conteúdo passa a ser os dados da carta (ver Carta.export()).
                 if (conteudo.startsWith(sala.getPath() + "/jogadores")) {
                     Carta carta = comprarCartaZookeeper(sala);
                     if (carta != null) {
@@ -237,7 +239,7 @@ public class ZookeeperService {
     public void pedirCompra(Jogador jogador) {
         Sala sala = jogador.getSalaAtual();
         Partida partida = sala.getPartida();
-        String requisicoesPath = sala.getPath()+ SUB_REQUISICOES;
+        String requisicoesPath = sala.getPath() + "/requisicoes";
         try {
             ArrayList<ACL> aclRequisicao = new ArrayList<>();
             // O host precisa de ALL para poder sobrescrever a resposta neste nó específico.
@@ -251,38 +253,46 @@ public class ZookeeperService {
                     aclRequisicao,
                     CreateMode.EPHEMERAL_SEQUENTIAL);
 
-            aguardarRespostaDaRequisicao(jogador, reqPath,
-                    dados -> processarCartaComprada(jogador, partida, reqPath, dados));
+            java.util.concurrent.atomic.AtomicBoolean jaProcessado =
+                    new java.util.concurrent.atomic.AtomicBoolean(false);
 
+            byte[] dadosIniciais = zookeeper.getData(reqPath, event -> {
+                if (event.getType() == Watcher.Event.EventType.NodeDataChanged
+                        && jaProcessado.compareAndSet(false, true)) {
+                    try {
+                        byte[] dados = zookeeper.getData(reqPath, false, null);
+                        processarCartaComprada(jogador, partida, reqPath, dados);
+                    } catch (Exception e) {
+                        System.out.println("Erro ao ler resposta da requisição: " + e.getMessage());
+                    }
+                }
+            }, null);
+
+            String conteudoInicial = new String(dadosIniciais);
+            if (!conteudoInicial.equals(jogador.getPath()) && jaProcessado.compareAndSet(false, true)) {
+                processarCartaComprada(jogador, partida, reqPath, dadosIniciais);
+            }
+
+            /*zookeeper.addWatch(reqPath, event -> {
+                if (event.getType() == Watcher.Event.EventType.NodeDataChanged) {
+                    try {
+                        byte[] dados = zookeeper.getData(reqPath, false, null);
+                        Carta cartaRecebida = new Carta(new String(dados));
+                        jogador.adicionarCarta(cartaRecebida);
+                        atualizarMao(jogador);
+                        zookeeper.delete(reqPath, -1);
+                        System.out.println(App.VERDE + "\nVocê comprou: " + cartaRecebida + App.RESET);
+
+                        partida.passarTurno();
+                        atualizarStatus(jogador);
+                    } catch (Exception e) {
+                        System.out.println("Erro ao ler resposta da requisição: " + e.getMessage());
+                    }
+                }
+            }, AddWatchMode.PERSISTENT);*/
 
         } catch (Exception e) {
             System.out.println("Erro ao solicitar compra de carta: " + e.getMessage());
-        }
-    }
-
-    private interface RespostaRequisicaoHandler {
-        void aoReceberCarta(byte[] dados) throws Exception;
-    }
-
-    private void aguardarRespostaDaRequisicao(Jogador jogador, String reqPath, RespostaRequisicaoHandler handler) throws Exception {
-        java.util.concurrent.atomic.AtomicBoolean jaProcessado =
-                new java.util.concurrent.atomic.AtomicBoolean(false);
-
-        byte[] dadosIniciais = zookeeper.getData(reqPath, event -> {
-            if (event.getType() == Watcher.Event.EventType.NodeDataChanged
-                    && jaProcessado.compareAndSet(false, true)) {
-                try {
-                    byte[] dados = zookeeper.getData(reqPath, false, null);
-                    handler.aoReceberCarta(dados);
-                } catch (Exception e) {
-                    System.out.println("Erro ao ler resposta da requisição: " + e.getMessage());
-                }
-            }
-        }, null);
-
-        String conteudoInicial = new String(dadosIniciais);
-        if (!conteudoInicial.equals(jogador.getPath()) && jaProcessado.compareAndSet(false, true)) {
-            handler.aoReceberCarta(dadosIniciais);
         }
     }
 
@@ -319,14 +329,20 @@ public class ZookeeperService {
         }
     }
 
-    public Partida entrarNaSala(Jogador jogador){
-        Sala sala = jogador.getSalaAtual();
+    public Partida entrarNaSala(Jogador jogadorInicial){
+        Sala sala = jogadorInicial.getSalaAtual();
         Partida partida = new Partida();
         sala.setPartida(partida);
 
-        String jogadoresPath = sala.getPath()+SUB_JOGADORES;
-        String conexoesPath = sala.getPath()+SUB_CONEXOES;
-        String statusPath = sala.getPath()+SUB_STATUS;
+        // Referência mutável: permite que este jogador seja promovido a Host durante a
+        // partida (eleição de líder) sem precisar recriar os watchers já registrados
+        // nesta sessão do ZooKeeper — eles passam a enxergar o novo objeto Host.
+        java.util.concurrent.atomic.AtomicReference<Jogador> jogadorRef =
+                new java.util.concurrent.atomic.AtomicReference<>(jogadorInicial);
+
+        String jogadoresPath = sala.getPath()+"/jogadores";
+        String conexoesPath = sala.getPath()+"/conexoes";
+        String statusPath = sala.getPath()+"/status";
 
         //Adicionando Watchers para os nós de status e jogadores
         try {
@@ -339,18 +355,19 @@ public class ZookeeperService {
                         System.out.println("DEU RUIM: " + e.getMessage());}
                     if (dados != null) {
                         partida.importStatus(new String(dados));
+                        Jogador jogadorAtualLocal = jogadorRef.get();
                         if (partida.temVencedor()) {
                             App.executarNaUi(() -> {
-                                App.telaVitoria(jogador, partida);
-                                if (jogador instanceof Host) {
-                                    removerNode(jogador.getSalaAtual().getPath());
+                                App.telaVitoria(jogadorAtualLocal, partida);
+                                if (jogadorAtualLocal instanceof Host) {
+                                    removerNode(jogadorAtualLocal.getSalaAtual().getPath());
                                 }
                                 App.telaInicial();
                             });
                         } else {
                             partida.setFilaJogadores(atualizarListaJogadores(sala));
                             partida.importStatus(new String(dados));
-                            App.executarNaUi(() -> App.telaGame(jogador));
+                            App.executarNaUi(() -> App.telaGame(jogadorAtualLocal));
                         }
 
                     }
@@ -358,10 +375,10 @@ public class ZookeeperService {
             }, AddWatchMode.PERSISTENT);
 
             zookeeper.addWatch(jogadoresPath, event -> {
-                if (event.getType() == Watcher.Event.EventType.NodeChildrenChanged ) {
+                if (event.getType() == Watcher.Event.EventType.NodeChildrenChanged /*|| event.getType() == Watcher.Event.EventType.NodeDataChanged*/) {
                     partida.setFilaJogadores(atualizarListaJogadores(sala));
                     if (!partida.isEmAndamento()) {
-                        App.atualizarLobby(jogador, partida.getFilaJogadores().size(), sala.getLimiteJogadores());
+                        App.atualizarLobby(jogadorRef.get(), partida.getFilaJogadores().size(), sala.getLimiteJogadores());
                     }
                 }
             },AddWatchMode.PERSISTENT);
@@ -373,30 +390,46 @@ public class ZookeeperService {
         try {
             String senha = sala.getSenha();
             JSONObject dadosIniciais = new JSONObject();
-            dadosIniciais.put("nome", jogador.getNome());
-            dadosIniciais.put("quantidadeCartas", jogador.getMao().size());
+            dadosIniciais.put("nome", jogadorInicial.getNome());
+            dadosIniciais.put("quantidadeCartas", jogadorInicial.getMao().size());
 
-            // Cria primeiro o nó do jogador para descobrir o path completo
+            // Cria primeiro o nó do jogador para descobrir o path completo (que já inclui o
+            // sequencial da SALA + o sequencial do JOGADOR, ex: "/salas/sala-0000000002/jogadores/jogador-0000000000")
             String jPath = zookeeper.create(jogadoresPath+"/jogador-", dadosIniciais.toString().getBytes(),
                     ZooDefs.Ids.CREATOR_ALL_ACL, CreateMode.PERSISTENT_SEQUENTIAL);
-            jogador.setPath(jPath);
+            jogadorInicial.setPath(jPath);
 
             partida.setFilaJogadores(atualizarListaJogadores(sala));
 
-            String cartasPath = jPath + SUB_CARTAS;
+            // Usamos o PATH COMPLETO do jogador (e não só o sequencial "cru") como parte do
+            // usuário da credencial digest. O sequencial do ZooKeeper só é único DENTRO do nó pai
+            // que o gerou (aqui, /jogadores desta sala) — ou seja, o jogador-0000000000 da sala X
+            // e o jogador-0000000000 da sala Y têm o MESMO sequencial. Se usássemos só o sequencial,
+            // duas salas com a MESMA senha (bem provável, ex: senha vazia) fariam esse jogador de X
+            // e esse jogador de Y caírem no MESMO hash digest, e um conseguiria ler/escrever a mão
+            // do outro. Como o path completo já inclui o sequencial da sala (globalmente único
+            // enquanto o nó /salas existir) + o sequencial do jogador, a string final nunca se repete,
+            // mesmo que a senha coincida entre salas diferentes.
+            String usuarioJogador = "jogador" + jPath;
+            zookeeper.addAuthInfo("digest", (usuarioJogador + ":" + senha).getBytes());
+
+            String cartasPath = jPath + "/cartas";
             ArrayList<ACL> aclCartas = new ArrayList<>();
             aclCartas.add(new ACL(ZooDefs.Perms.ALL, autentificaoDigest("host", senha)));
-            aclCartas.add(new ACL(ZooDefs.Perms.ALL, autentificaoDigest("jogador", senha)));
-            zookeeper.create(cartasPath, jogador.exportMao().getBytes(), aclCartas, CreateMode.PERSISTENT);
+            aclCartas.add(new ACL(ZooDefs.Perms.ALL, autentificaoDigest(usuarioJogador, senha)));
+            zookeeper.create(cartasPath, jogadorInicial.exportMao().getBytes(), aclCartas, CreateMode.PERSISTENT);
 
-            // Observa o próprio nó de cartas, sempre que o host distribuir cartas iniciais,
+            // Observa o próprio nó de cartas: sempre que o host distribuir cartas iniciais,
+            // ou o próprio jogador comprar/jogar uma carta, a mão local é ressincronizada a
+            // partir do que está gravado no ZooKeeper.
             zookeeper.addWatch(cartasPath, event -> {
                 if (event.getType() == Watcher.Event.EventType.NodeDataChanged) {
                     try {
+                        Jogador jogadorAtualLocal = jogadorRef.get();
                         byte[] dados = zookeeper.getData(cartasPath, false, null);
-                        jogador.importMao(new String(dados));
-                        if (jogador.getSalaAtual().getPartida().isEmAndamento()) {
-                            App.executarNaUi(() -> App.telaGame(jogador));
+                        jogadorAtualLocal.importMao(new String(dados));
+                        if (jogadorAtualLocal.getSalaAtual().getPartida().isEmAndamento()) {
+                            App.executarNaUi(() -> App.telaGame(jogadorAtualLocal));
                         }
                         System.out.println(App.VERDE + "\nSua mão foi atualizada." + App.RESET);
                     } catch (Exception e) {
@@ -405,18 +438,108 @@ public class ZookeeperService {
                 }
             }, AddWatchMode.PERSISTENT);
 
+            // O nó efêmero de /conexoes carrega como dado o path do jogador a que pertence.
+            // É através dele (e não de um nó "/saidas" separado) que o host descobre quando um
+            // jogador saiu: seja de forma voluntária (o jogador apaga esse nó ao clicar em "Sair"),
+            // seja por queda de conexão/fechar o app (o próprio ZooKeeper remove o nó efêmero quando
+            // a sessão morre). Nos dois casos o host recebe o mesmo evento em /conexoes.
             String conexaoPath = zookeeper.create(conexoesPath+"/conexao-", jPath.getBytes(),
                     ZooDefs.Ids.CREATOR_ALL_ACL, CreateMode.EPHEMERAL_SEQUENTIAL);
-            jogador.setConexaoPath(conexaoPath);
+            jogadorInicial.setConexaoPath(conexaoPath);
 
-
-
+            // TOLERÂNCIA A FALHAS: a partir daqui este cliente passa a monitorar se precisa
+            // assumir o papel de host (ver 7.1 do documento do projeto).
+            monitorarLideranca(jogadorRef);
 
         } catch (Exception e) {
             System.out.println("Não foi possível criar os nodes básicos da partida: "+e.getMessage());
         }
         return partida;
 
+    }
+
+    // =========================================================================
+    // TOLERÂNCIA A FALHAS — ELEIÇÃO DE LÍDER
+    // =========================================================================
+    // Segue o algoritmo clássico de eleição de líder do ZooKeeper: em vez de todo
+    // mundo observar o nó /conexoes inteiro (o que causaria uma "estampida" de
+    // notificações toda vez que alguém entra ou sai — o chamado "herd effect"),
+    // cada cliente observa APENAS o nó imediatamente anterior ao seu, na ordem dos
+    // sequenciais. Quando esse nó desaparece, o cliente reavalia sua posição: se
+    // virou o menor sequencial da lista, ele assume o papel de host.
+    private void monitorarLideranca(java.util.concurrent.atomic.AtomicReference<Jogador> jogadorRef) {
+        try {
+            Jogador jogador = jogadorRef.get();
+            String conexoesPath = jogador.getSalaAtual().getPath() + "/conexoes";
+            List<String> filhos = zookeeper.getChildren(conexoesPath, false);
+            Collections.sort(filhos);
+
+            String meuNo = jogador.getConexaoPath().substring(conexoesPath.length() + 1);
+            int minhaPos = filhos.indexOf(meuNo);
+            if (minhaPos <= 0) {
+                return; // já sou o menor sequencial (o host atual) -> nada a monitorar
+            }
+
+            String predecessorPath = conexoesPath + "/" + filhos.get(minhaPos - 1);
+            Stat stat = zookeeper.exists(predecessorPath, event -> {
+                if (event.getType() == Watcher.Event.EventType.NodeDeleted) {
+                    reavaliarLideranca(jogadorRef);
+                }
+            });
+
+            // O predecessor já tinha sumido entre o getChildren() e o exists() acima
+            // (corrida rara, mas possível) -> reavalia imediatamente em vez de esperar
+            // um evento que já não vai mais chegar.
+            if (stat == null) {
+                reavaliarLideranca(jogadorRef);
+            }
+        } catch (Exception e) {
+            System.out.println("Erro ao monitorar liderança: " + e.getMessage());
+        }
+    }
+
+    private void reavaliarLideranca(java.util.concurrent.atomic.AtomicReference<Jogador> jogadorRef) {
+        try {
+            Jogador jogador = jogadorRef.get();
+            String conexoesPath = jogador.getSalaAtual().getPath() + "/conexoes";
+            List<String> filhos = zookeeper.getChildren(conexoesPath, false);
+            if (filhos.isEmpty()) {
+                return; // sala vazia, nada a fazer
+            }
+            Collections.sort(filhos);
+
+            String meuNo = jogador.getConexaoPath().substring(conexoesPath.length() + 1);
+            if (filhos.get(0).equals(meuNo)) {
+                assumirHost(jogadorRef);
+            } else {
+                monitorarLideranca(jogadorRef); // ainda não sou o menor, observa o novo predecessor
+            }
+        } catch (Exception e) {
+            System.out.println("Erro ao reavaliar liderança: " + e.getMessage());
+        }
+    }
+
+    // Promove o jogador local a Host: reaproveita path, conexão e mão (ver o novo
+    // construtor Host(Jogador) em Host.java, que NÃO reembaralha o baralho, já que o
+    // baralho real já existe no ZooKeeper e pode estar parcialmente consumido) e
+    // retoma as responsabilidades de host (escutar conexões e requisições de compra).
+    private void assumirHost(java.util.concurrent.atomic.AtomicReference<Jogador> jogadorRef) {
+        Jogador jogadorAtual = jogadorRef.get();
+        if (jogadorAtual instanceof Host) {
+            return; // segurança: evita promover duas vezes
+        }
+
+        Host novoHost = new Host(jogadorAtual);
+        jogadorRef.set(novoHost);
+
+        try {
+            escutarConexoes(novoHost);
+            escutarRequisicoes(novoHost);
+            System.out.println(App.VERMELHO + "\nO host caiu. Você assumiu o papel de host!" + App.RESET);
+            App.executarNaUi(() -> App.telaGame(novoHost));
+        } catch (Exception e) {
+            System.out.println("Erro ao assumir papel de host: " + e.getMessage());
+        }
     }
 
     public void comecarPartida(Host host){
@@ -459,7 +582,7 @@ public class ZookeeperService {
                 if (carta == null) break; // baralho remoto acabou
                 arr.put(carta.export());
             }
-            String cartasPath = jogador.getPath() + SUB_CARTAS;
+            String cartasPath = jogador.getPath() + "/cartas";
             try {
                 zookeeper.setData(cartasPath, arr.toString().getBytes(), -1);
                 JSONObject dadosJogador = new JSONObject();
@@ -473,7 +596,7 @@ public class ZookeeperService {
     }
 
     public boolean atualizarMao(Jogador jogador) {
-        String cartasPath = jogador.getPath() + SUB_CARTAS;
+        String cartasPath = jogador.getPath() + "/cartas";
         try {
             zookeeper.setData(cartasPath, jogador.exportMao().getBytes(), -1);
             JSONObject dadosJogador = new JSONObject();
@@ -489,7 +612,10 @@ public class ZookeeperService {
 
     private final java.util.Map<String, String> conexoesJogadores = new java.util.HashMap<>();
 
-    // Chamado pelo jogador que está saindo voluntariamente da sala/partida
+    // Chamado pelo jogador que está saindo voluntariamente da sala/partida: apaga seu próprio
+    // nó efêmero em /conexoes. Isso dispara, no host, o mesmo caminho de código que trataria
+    // uma queda de conexão (sessão morrendo sozinha), então as cartas voltam ao baralho de
+    // qualquer forma — não precisamos de um nó "/saidas" separado para esse aviso.
     public void sairDaSala(Jogador jogador) {
         try {
             Sala sala = jogador.getSalaAtual();
@@ -512,10 +638,10 @@ public class ZookeeperService {
     }
     private void removerWatchesDaSala(Sala sala, Jogador jogador) {
         java.util.List<String> paths = new java.util.ArrayList<>();
-        paths.add(sala.getPath() + SUB_STATUS);
-        paths.add(sala.getPath() + SUB_JOGADORES);
+        paths.add(sala.getPath() + "/status");
+        paths.add(sala.getPath() + "/jogadores");
         if (jogador.getPath() != null) {
-            paths.add(jogador.getPath() + SUB_CARTAS);
+            paths.add(jogador.getPath() + "/cartas");
         }
 
         for (String path : paths) {
@@ -526,7 +652,7 @@ public class ZookeeperService {
         }
     }
 
-    /*public void sairDaPartida(Jogador jogador) {
+    public void sairDaPartida(Jogador jogador) {
         Sala sala = jogador.getSalaAtual();
         Partida partida = sala.getPartida();
 
@@ -555,10 +681,11 @@ public class ZookeeperService {
         }
 
         sairDaSala(jogador);
-    }*/
+    }
 
 
-    // O host começa a acompanhar /conexoes assim que entra na sala
+    // O host começa a acompanhar /conexoes assim que entra na sala (ver App.telaCriarSala),
+    // guardando quem já está conectado e reagindo a entradas/saídas dali para frente.
     public void escutarConexoes(Host host) {
         Sala sala = host.getSalaAtual();
         String conexoesPath = sala.getPath() + "/conexoes";
@@ -566,6 +693,13 @@ public class ZookeeperService {
             for (String filho : zookeeper.getChildren(conexoesPath, false)) {
                 registrarConexao(conexoesPath, filho);
             }
+            // Reconciliação usada quando um novo host assume via eleição de líder: o host
+            // anterior pode ter caído ANTES deste cliente começar a observar /conexoes, então
+            // o nó dele já não existe mais e jamais entraria no diff incremental que
+            // processarMudancaConexoes faz a partir daqui pra frente. Aqui comparamos direto
+            // quem está persistido em /jogadores contra quem tem uma conexão ativa agora, e
+            // devolve ao baralho (removendo o nó /jogadores) quem ficou órfão.
+            reconciliarJogadoresOrfaos(sala, host);
             zookeeper.addWatch(conexoesPath, event -> {
                 if (event.getType() == Watcher.Event.EventType.NodeChildrenChanged) {
                     processarMudancaConexoes(sala, host);
@@ -573,6 +707,21 @@ public class ZookeeperService {
             }, AddWatchMode.PERSISTENT);
         } catch (Exception e) {
             System.out.println("Erro ao escutar conexões: " + e.getMessage());
+        }
+    }
+
+    private void reconciliarJogadoresOrfaos(Sala sala, Host host) {
+        String jogadoresPath = sala.getPath() + "/jogadores";
+        try {
+            java.util.Set<String> pathsComConexaoAtiva = new java.util.HashSet<>(conexoesJogadores.values());
+            for (String filho : zookeeper.getChildren(jogadoresPath, false)) {
+                String pathJogador = jogadoresPath + "/" + filho;
+                if (!pathsComConexaoAtiva.contains(pathJogador)) {
+                    devolverCartasAoBaralho(sala, pathJogador, host);
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("Erro ao reconciliar jogadores órfãos: " + e.getMessage());
         }
     }
 
@@ -584,12 +733,14 @@ public class ZookeeperService {
                 conexoesJogadores.put(path, new String(dados));
             }
         } catch (Exception ignored) {
+            // o nó pode ter desaparecido entre o getChildren e o getData; ignoramos, o próximo
+            // evento de NodeChildrenChanged cuida da consistência
         }
     }
 
-    // Compara a lista atual de filhos de /conexoes com o que tinha antes, quem sumiu, saiu
+    // Compara a lista atual de filhos de /conexoes com o que sabíamos antes: quem sumiu, saiu
     // (voluntariamente ou por queda) e tem suas cartas devolvidas ao baralho; quem é novo, passa
-    // a ser rastreado a partir de agora
+    // a ser rastreado a partir de agora.
     private void processarMudancaConexoes(Sala sala, Host host) {
         String conexoesPath = sala.getPath() + "/conexoes";
         try {
@@ -616,6 +767,9 @@ public class ZookeeperService {
         }
     }
 
+    // O host tem ACL de leitura/escrita tanto em /cartas de qualquer jogador quanto em /baralho,
+    // então consegue, sozinho, ler a mão de quem saiu, devolver cada carta ao baralho remoto
+    // (como novos nós sequenciais) e remover a árvore do jogador (/jogadores/jogador-XXXX).
     private void devolverCartasAoBaralho(Sala sala, String pathJogador, Host host) {
         String baralhoPath = sala.getPath() + "/baralho";
         String cartasPath = pathJogador + "/cartas";
@@ -638,16 +792,48 @@ public class ZookeeperService {
             System.out.println(App.AMARELO + "\nUm jogador saiu da partida e suas cartas voltaram ao baralho." + App.RESET);
 
             Partida partida = sala.getPartida();
+
+            // Se quem saiu estava com a vez, precisamos escolher o próximo ANTES de
+            // reconstruir filaJogadores (senão ele já não estará mais na lista antiga e
+            // proximoJogadorExcluindo perde a posição/ordem certa).
+            boolean eraAVezDele = partida.getJogadorAtual() != null
+                    && java.util.Objects.equals(partida.getJogadorAtual().getPath(), pathJogador);
+            String proximoPath = null;
+            if (eraAVezDele && partida.getFilaJogadores() != null) {
+                for (Jogador j : partida.getFilaJogadores()) {
+                    if (java.util.Objects.equals(j.getPath(), pathJogador)) {
+                        Jogador proximo = partida.proximoJogadorExcluindo(j);
+                        proximoPath = proximo == null ? null : proximo.getPath();
+                        break;
+                    }
+                }
+            }
+            // Se o jogador que saiu era quem estava "obrigado" a comprar (+2/+4 pendurado),
+            // essa obrigação não faz mais sentido — zera pra não travar o próximo turno.
+            if (pathJogador.equals(partida.getJogadorObrigadoPath())) {
+                partida.zerarObrigacaoCompra();
+            }
+
             partida.setFilaJogadores(atualizarListaJogadores(sala));
 
             if (partida.getFilaJogadores().isEmpty()) {
-                // Ninguém mais restou na sala, encerra e limpa os nodes no ZooKeeper.
+                // Ninguém mais restou na sala: encerra e limpa os nodes no ZooKeeper.
                 removerNode(sala.getPath());
             } else if (partida.getFilaJogadores().size() == 1 && partida.isEmAndamento() && !partida.temVencedor()) {
-                // Só restou um jogador ele vence por W.O. e a partida acaba para todos.
+                // Só restou um jogador (por exemplo, alguém caiu da conexão em vez de
+                // sair pelo menu): ele vence por W.O. e a partida acaba para todos.
                 partida.declararVencedor(partida.getFilaJogadores().get(0));
                 atualizarStatus(host);
             } else if (partida.isEmAndamento() && !partida.temVencedor()) {
+                if (eraAVezDele && proximoPath != null) {
+                    for (Jogador j : partida.getFilaJogadores()) {
+                        if (java.util.Objects.equals(j.getPath(), proximoPath)) {
+                            partida.setJogadorAtual(j);
+                            break;
+                        }
+                    }
+                    partida.incrementarTurno();
+                }
                 atualizarStatus(host);
             }
 
@@ -672,7 +858,7 @@ public class ZookeeperService {
 
     public ArrayList<Jogador> atualizarListaJogadores(Sala sala){
         ArrayList<Jogador> jogadores = new ArrayList<>();
-        String jogadoresPath = sala.getPath()+ SUB_JOGADORES;
+        String jogadoresPath = sala.getPath()+"/jogadores";
 
         try {
             List<String> filhos = zookeeper.getChildren(jogadoresPath, false);
@@ -718,8 +904,46 @@ public class ZookeeperService {
                     aclRequisicao,
                     CreateMode.EPHEMERAL_SEQUENTIAL);
 
-            aguardarRespostaDaRequisicao(jogador, reqPath,
-                    dados -> processarCartaDaPenalidade(jogador, reqPath, dados, quantidade));
+            java.util.concurrent.atomic.AtomicBoolean jaProcessado =
+                    new java.util.concurrent.atomic.AtomicBoolean(false);
+
+
+            /*zookeeper.addWatch(reqPath, event -> {
+                if (event.getType() == Watcher.Event.EventType.NodeDataChanged) {
+                    try {
+                        byte[] dados = zookeeper.getData(reqPath, false, null);
+                        Carta cartaRecebida = new Carta(new String(dados));
+                        jogador.adicionarCarta(cartaRecebida);
+                        atualizarMao(jogador);
+                        zookeeper.delete(reqPath, -1);
+                        System.out.println(App.VERMELHO + "Você comprou (penalidade): " + cartaRecebida + App.RESET);
+                        comprarCartasForcadas(jogador, quantidade - 1); // encadeia até acabar
+                    } catch (Exception e) {
+                        System.out.println("Erro ao processar compra forçada: " + e.getMessage());
+                    }
+                }
+            }, AddWatchMode.PERSISTENT);*/
+
+            byte[] dadosIniciais = zookeeper.getData(reqPath, event -> {
+                if (event.getType() == Watcher.Event.EventType.NodeDataChanged
+                        && jaProcessado.compareAndSet(false, true)) {
+                    try {
+                        byte[] dados = zookeeper.getData(reqPath, false, null);
+                        processarCartaDaPenalidade(jogador, reqPath, dados, quantidade);
+                    } catch (Exception e) {
+                        System.out.println("Erro ao processar compra forçada: " + e.getMessage());
+                    }
+                }
+            }, null);
+
+            // Se a resposta já estava lá quando registramos o watch (host foi mais rápido
+            // que a rede até nós), processa imediatamente em vez de esperar um evento que
+            // já não vai mais chegar.
+            String conteudoInicial = new String(dadosIniciais);
+            if (!conteudoInicial.equals(jogador.getPath()) && jaProcessado.compareAndSet(false, true)) {
+                processarCartaDaPenalidade(jogador, reqPath, dadosIniciais, quantidade);
+            }
+
 
         } catch (Exception e) {
             System.out.println("Erro ao solicitar compra forçada: " + e.getMessage());
