@@ -17,7 +17,7 @@ public enum Cor {
         this.b = b;
     }
 
-    //converter string em enum
+    //converter string em enum e compara
     public static Cor fromString(String texto) {
         for (Cor cor : Cor.values()) {
             if (cor.name().equalsIgnoreCase(texto)) {

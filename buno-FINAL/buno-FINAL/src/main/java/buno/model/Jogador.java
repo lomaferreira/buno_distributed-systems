@@ -11,7 +11,7 @@ public class Jogador {
     private ArrayList<Carta> mao;
     private int quantidadeCartas; //Contagem pública da mão (para outros jogadores verem sem ler /cartas)
     private String conexaoPath; //O caminho do nó efêmero em /conexoes que representa esta sessão
-    private boolean penalidadeEmAndamento = false;
+    private boolean penalidadeEmAndamento = false; // indicar se já recebeu +2 ou +4
 
     public Jogador(String nome, Sala salaAtual){
         this.salaAtual = salaAtual;
@@ -85,9 +85,6 @@ public class Jogador {
         return nome;
     }
 
-    public void setNome(String nome) {
-        this.nome = nome;
-    }
 
     public Sala getSalaAtual() {
         return salaAtual;
@@ -102,10 +99,6 @@ public class Jogador {
         if (this == o) return true;
         if (!(o instanceof Jogador jogador)) return false;
         return Objects.equals(path, jogador.path);
-    }
-    @Override
-    public int hashCode() {
-        return Objects.hash(path);
     }
 
 

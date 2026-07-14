@@ -59,10 +59,6 @@ public class ZookeeperService {
         }
     }
 
-    public ZooKeeper getZookeeper() {
-        return zookeeper;
-    }
-
     public void desconectar(){
         try {
             zookeeper.close();
@@ -106,7 +102,7 @@ public class ZookeeperService {
     public List<Sala> listar_salas(){
         List<Sala> salas = new ArrayList<>();
         try {
-            for (String path : zookeeper.getChildren(salas_node, false)){
+            for (String path : zookeeper.getChildren(salas_node, false)){ //retorna os nós filhos da /sala
                 byte[] dados = zookeeper.getData(salas_node+'/'+path, false, null);
                 Sala sala_disponivel = new Sala(new String(dados), salas_node+'/'+path); // Reconstrói o objeto Java Sala através do JSON baixado
                 salas.add(sala_disponivel);
@@ -116,6 +112,7 @@ public class ZookeeperService {
             System.out.println("DEU MUITO RUIM: "+e.getMessage());
         }
         return salas;
+
     }
 
     // Remove recursivamente um nó e seus sub-nós do servidor
@@ -188,11 +185,11 @@ public class ZookeeperService {
             }
 
             Collections.sort(filhos); // Garante que pegar sempre o menor sufixo sequencial (o "topo")
-            String menorFilho = filhos.get(0);
+            String menorFilho = filhos.get(0); //pega a primeira carta da lista
             String cartaPath = baralhoPath + "/" + menorFilho;
 
-            byte[] dados = zookeeper.getData(cartaPath, false, null);
-            Carta carta = new Carta(new String(dados));
+            byte[] dados = zookeeper.getData(cartaPath, false, null);//busca os dados da carta
+            Carta carta = new Carta(new String(dados));//cria uma carta local
 
             zookeeper.delete(cartaPath, -1);
             return carta;
@@ -215,7 +212,7 @@ public class ZookeeperService {
         }
     }
     private void processarRequisicoesPendentes(Sala sala) {
-        String requisicoesPath = sala.getPath() + "/requisicoes";
+        String requisicoesPath = sala.getPath() + SUB_REQUISICOES;
         try {
             List<String> requisicoes = zookeeper.getChildren(requisicoesPath, false);
             for (String req : requisicoes) {
@@ -500,6 +497,7 @@ public class ZookeeperService {
 
         try {
             escutarConexoes(novoHost);
+            zookeeper.addAuthInfo("digest", ("host:" + novoHost.getSalaAtual().getSenha()).getBytes());
             escutarRequisicoes(novoHost);
             System.out.println(App.VERMELHO + "\nO host caiu. Você assumiu o papel de host!" + App.RESET);
             App.executarNaUi(() -> App.telaGame(novoHost));

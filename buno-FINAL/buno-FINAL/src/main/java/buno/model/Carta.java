@@ -13,11 +13,6 @@ public class Carta {
         }
     }
 
-    public Carta(Simbolo simbolo, Cor cor) {
-        this.simbolo = simbolo;
-        this.cor = cor;
-    }
-
     public boolean podeSerJogada(Carta topoDescarte){
         return (topoDescarte.simbolo == this.simbolo || topoDescarte.cor == this.cor || this.cor == Cor.PRETO) &&
                 (this.simbolo != null) && (this.cor != null);

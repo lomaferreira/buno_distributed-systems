@@ -12,7 +12,6 @@ public class GameController {
     public GameController(Jogador jogador){
         this.jogador = jogador;
     }
-
     public boolean jogarCarta(Jogador jogador, Carta carta){
         Partida partida = jogador.getSalaAtual().getPartida();
         Carta topoPilha = partida.getCartaTopo();

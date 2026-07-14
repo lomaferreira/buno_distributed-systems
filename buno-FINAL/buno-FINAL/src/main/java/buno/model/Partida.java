@@ -13,8 +13,8 @@ public class Partida {
     private Stack<Carta> pilhaDescarte = new Stack<>();
     private ArrayList<Jogador> filaJogadores;
     private int cartasParaComprar = 0;
-    private String jogadorObrigadoPath;
-    private boolean emAndamento = false;
+    private String jogadorObrigadoPath; //caminho do jogador que é obrigado a comprar
+    private boolean emAndamento = false; //indica se a partida começou
     private String vencedorPath;
     private String vencedorNome;
 
@@ -122,16 +122,6 @@ public class Partida {
 
     public boolean temVencedor() {
         return vencedorPath != null;
-    }
-
-    private void garantirJogadorAtualValido() {
-        if (filaJogadores == null || filaJogadores.isEmpty()) {
-            jogadorAtual = null;
-            return;
-        }
-        if (jogadorAtual == null || !filaJogadores.contains(jogadorAtual)) {
-            jogadorAtual = filaJogadores.get(0);
-        }
     }
 
     public void incrementarTurno(){

@@ -6,13 +6,11 @@ import java.util.List;
 import org.json.JSONObject;
 
 public class Sala {
-    private String path;
+    private String path; //caminho da sala
     private String nome;
     private String senha;
-    private Jogador host;
     private Partida partida;
     private int limiteJogadores;
-    private List<Jogador> jogadores;
     private boolean temSenha;
 
     public Sala(String nome, String senha, int limiteJogadores){
@@ -28,7 +26,6 @@ public class Sala {
         this.nome = obj.getString("nome");
         this.temSenha = obj.optBoolean("tem_senha", false);
         this.path = path;
-        this.jogadores = new ArrayList<>();
         this.limiteJogadores = obj.getInt("limite_jogadores");
     }
 
@@ -66,11 +63,6 @@ public class Sala {
 
     public void setPartida(Partida partida) {
         this.partida = partida;
-    }
-
-    @Override
-    public String toString() {
-        return String.format("%s (%d/%d)",this.nome, this.jogadores.size(), this.limiteJogadores);
     }
 
     public boolean temSenha() {
